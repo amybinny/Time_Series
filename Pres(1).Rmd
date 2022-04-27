@@ -1,0 +1,263 @@
+---
+title: "Consumer vs Producer Egg Prices Over Time"
+author: "Chad Gueli, Alina Martinez, Amy Philip, and Xuliejun Ren"
+date: "12/6/2021"
+output:
+    beamer_presentation:
+        theme: "AnnArbor"
+        colortheme: "dolphin"
+        fonttheme: "structurebold"
+---
+
+```{r setup, include=FALSE}
+library(MTS)
+library(seastests)
+library(vars)
+library(tseries)
+library(tidyverse)
+library(feather)
+
+data <- read_feather("C:/Users/Gloria/Downloads/orig_data.feather") %>%
+    select(index, c_eggs, p_eggs) %>%
+    mutate(ceggs=c_eggs, peggs=p_eggs/100, .keep="unused")
+
+pts <- ts(data$peggs, frequency=12, start=c(2000,1))
+cts <- ts(data$ceggs, frequency=12, start=c(2000,1))
+eggts <- cbind(pts, cts)
+
+pdiff <- diff(pts, lag=12)
+cdiff <- diff(cts, lag=12)
+
+diffed <- cbind(pdiff, cdiff)
+
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+##  PPI of Eggs Over Time
+```{r peg}
+plot.zoo(pts, col=4, las=1, main="Producer Price of Eggs", ylab="Price ($)")
+```
+
+##  CPI of Eggs Over Time
+```{r ceg}
+plot.zoo(cts, col=4, las=1, main="Consumer Price of Eggs", ylab="Price ($)")
+```
+
+## Auto-Correlation of Producer Egg Prices
+```{r ppppp}
+acf(pts)
+pacf(pts)
+```
+
+## Auto-Correlation of Consumer Egg Prices
+```{r cccccc}
+acf(cts)
+pacf(cts)
+```
+
+## Kruskal-Wallis Test
+
+$H_0$: No seasonality (i.e. medians are the same at different lags)
+
+- Producer Seasonality
+    - Reject at the 0.01 level
+    
+\tiny
+```{r}
+kw(pts)
+```
+
+\normalsize
+- Consumer Seasonality
+    - Reject at the 0.01 level
+
+\tiny
+```{r}
+kw(cts)
+```
+
+## Remove Seasonality
+
+We difference with a lag of 12, to remove seasonality.
+
+- Producer Seasonality
+    - Fail to reject at the 0.01 level
+    
+\tiny
+```{r}
+kw(pdiff)
+```
+
+\normalsize
+- Consumer Seasonality
+    - Fail to reject at the 0.01 level
+
+\tiny
+```{r}
+kw(cdiff)
+```
+
+\normalsize
+- After differencing, we are unable to conclude that there is seasonality.
+
+## Plot of 12-Month Difference in Producer Price
+```{r, out.width="80%"}
+plot(pdiff, ylab="12-Month Price Difference")
+```
+
+- Series looks to be centered at 0, suggesting stationarity.
+
+## Plot of 12-Month Difference in Consumer Price
+
+```{r, out.width="80%"}
+plot(cdiff, ylab="12-Month Price Difference")
+```
+
+- Process appears to have mean 0, implying stationarity.
+
+## Augmented Dickey-Fuller Test
+
+$H_0$: Time series is non-stationary.
+
+- Producer Price
+    - Reject at least at the 0.01 level.
+    
+\tiny
+```{r, warning=FALSE}
+adf.test(pdiff)
+```
+\normalsize
+- Consumer Price
+    - Reject at least at the 0.01 level.
+
+\tiny
+```{r, warning=FALSE}
+adf.test(cdiff)
+```
+
+## Vector Auto-Regressive (VAR) Model
+- For multivariate series
+- Relation of lags and lags of other variables
+- Before we need to check if one causes the other
+
+## Granger Test
+
+$H_0$: No sequence causes another.
+
+\tiny
+```{r granger}
+GrangerTest(diffed, p=5)
+```
+
+\normalsize
+- Reject null hypothesis at 0.01 level and concluded there is causality between the time series.
+
+## Selecting Lag
+
+```{r}
+VARselect(diffed)$selection
+```
+We use the Schwarz Criterion or BIC, and will fit an VAR process of order 5.
+
+## VAR model
+
+
+```{r  fit model, echo=TRUE}
+vm <- vars::VAR(diffed, p=5)
+```
+We fit the model with the `VAR` function from the vars package.
+
+## Egg Price Coefficients
+
+- Consumer
+
+\tiny
+```{r}
+vm$varresult$cdiff
+```
+
+\normalsize
+- Producer
+
+\tiny
+```{r}
+vm$varresult$pdiff
+```
+
+## Jarque-Bera Normality Tests
+
+$H_0$: residual skewness and kurtosis are consistent with normality
+
+- Skewness
+    - Fail to reject assumption that residual skewness is consistent with normality.
+
+\tiny
+```{r norm skew}
+ntest <- normality.test(vm)
+ntest$jb.mul$Skewness
+```
+
+\normalsize
+- Kurtosis
+    - Reject assumption that residual kurtosis is consistent with normality.
+
+\tiny
+```{r norm kurt}
+ntest$jb.mul$Kurtosis
+```
+
+
+## Test of Residual Serial Correlation
+
+$H_0$: No residual serial correlation
+
+- Breusch-Goldfrey Test
+    - Score test
+
+\tiny
+```{r BG}
+serial.test(vm, type="BG")
+```
+
+\normalsize
+- Edgerton-Shukur Test
+    - Likelihood-Ratio (F) test
+
+\tiny
+```{r ES}
+serial.test(vm, type="ES")
+```
+
+\normalsize
+- Both tests reject assumption at the 0.01 level
+
+## Discussion of Problems
+- The residuals are both serially correlated and non-normal, these are likely symptoms of the same problem
+
+- There seems to exist heteroscedasticity in the residuals, preventing an analytic comparison of the series.
+
+
+## Stability Plot for De-Seasoned Producer Egg Price
+```{r stability}
+stab <- stability(vm)
+plot(stab$stability$pdiff)
+```
+
+## Stability Plot for De-Seasoned Consumer Egg Price
+```{r stability2}
+plot(stab$stability$cdiff)
+```
+
+## Our Model
+
+```{r mod plot, out.width="45%", out.height="100%"}
+plot(vm)
+```
+
+
+## The Fan Chart
+```{r fan chart, out.height="80%"}
+var.f10 <- predict(vm, n.ahead = 10, ci = 0.99)
+fanchart(var.f10, main=c("PPI Eggs", "CPI Eggs"))
+```
+
